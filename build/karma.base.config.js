@@ -40,7 +40,6 @@ module.exports = {
     webpackMiddleware: {
         stats: 'errors-only'
     },
-    middleware: ['page-runner'],
     reporters: ['progress'],
     autoWatch: true,
     browserDisconnectTimeout: 5 * 60 * 1000,

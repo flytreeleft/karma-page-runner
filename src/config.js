@@ -1,5 +1,6 @@
 module.exports = {
-    context: '/__page_runner__',
+    name: 'page-runner',
+    context: '/_page_runner_',
     apis: {
         info: '/info',
         page: '/page'

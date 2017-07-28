@@ -29,12 +29,15 @@ var createPattern = function (path) {
     return {pattern: path, included: true, served: true, watched: false};
 };
 
-var frameworkFactory = function (files) {
+var frameworkFactory = function (files, config) {
     files.unshift(createPattern(path.join(__dirname, 'runner.css')));
     files.unshift(createPattern(path.join(__dirname, 'adapter.js')));
+
+    config.middleware = config.middleware || [];
+    config.middleware.unshift(runnerConfig.name);
 };
 
-frameworkFactory.$inject = ['config.files'];
+frameworkFactory.$inject = ['config.files', 'config'];
 
 var middlewareFactory = function (logger, basePath, config) {
     // https://nodejs.org/api/http.html#http_class_http_incomingmessage
@@ -60,8 +63,6 @@ var middlewareFactory = function (logger, basePath, config) {
 
 middlewareFactory.$inject = ['logger', 'config.basePath', 'config'];
 
-module.exports = {
-    'framework:page-runner': ['factory', frameworkFactory],
-    'middleware:page-runner': ['factory', middlewareFactory]
-};
-
+module.exports = {};
+module.exports['framework:' + runnerConfig.name] = ['factory', frameworkFactory];
+module.exports['middleware:' + runnerConfig.name] = ['factory', middlewareFactory];
