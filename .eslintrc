@@ -1,0 +1,14 @@
+{
+  "extends": "eslint-config-airbnb",
+  "env": {
+    "browser": true,
+    "node": true,
+    "mocha": true,
+    "es6": true
+  },
+  "rules": {
+    "class-methods-use-this": "off",
+    "no-confusing-arrow": "off",
+    "no-param-reassign": "off"
+  }
+}

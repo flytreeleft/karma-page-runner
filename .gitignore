@@ -1,0 +1,13 @@
+node_modules
+.DS_Store
+coverage
+dist
+npm-debug.log
+*.iws
+*.iml
+*.ipr
+.idea/
+.classpath
+.project
+.settings
+.externalToolBuilders
