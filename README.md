@@ -13,7 +13,7 @@ npm run test:e2e --browsers=phantomjs,chrome
 npm run test:unit --browsers=phantomjs,chrome
 
 # Running End-to-End tests on Chrome, Firefox in debug mode
-npm run test:e2e --debug=true --browsers=chrome,firefox
+npm run test:e2e --debug --browsers=chrome,firefox
 
 # Running the specified tests
 npm run test:e2e --browsers=phantomjs --tests=<test-name-relative-e2e-base-path>
