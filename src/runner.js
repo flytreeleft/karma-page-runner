@@ -10,7 +10,6 @@
  * - [ ] 在运行环境支持的情况下可截图
  * - [ ] 可拦截测试页面中的请求，并做本地/远端转发或返回模拟数据
  */
-
 /*
  * ```
  * Browser.mock(url, [String/Function] content);
@@ -26,12 +25,13 @@ import defaults from 'lodash/defaults';
 import isNumber from 'lodash/isNumber';
 import Sizzle from 'sizzle';
 import simulant from 'simulant';
+import Promise from 'bluebird';
 
 import {
-    getScrollbarSize,
-    getOffsetToPage,
-    getBoxInnerSize,
     getBorderSize,
+    getBoxInnerSize,
+    getOffsetToPage,
+    getScrollbarSize,
     scroll
 } from './utils';
 import config from './config';
@@ -93,151 +93,227 @@ function getPagePositionOnNode(target, offset, middleWhenNoneOffset) {
 }
 
 /**
+ * Examples:
+ * ```
  * const mouse = new Mouse(new Page());
  * mouse.goTo('#source').down().moveTo('#target').up();
  * mouse.goTo('#dom').click().dblclick();
  * mouse.goTo('#node', {x: 10, y:20});
  * mouse.goTo(100, 200).click().moveTo(300, 500).dblclick();
  * mouse.moveTo('#element', {x: 5, y: 2}, 5).click();
+ * mouse.done(() => {
+ *     // Do some final things
+ * });
+ * ```
  */
 function Mouse(page) {
-    // The position is relative to the whole document/page
-    this.x = 0;
-    this.y = 0;
     this.page = page;
+    // The position is relative to the whole document/page
+    this.$p = Promise.resolve({pos: {x: 0, y: 0}, target: null});
 }
-
-// TODO Promise interfaces
 
 /**
  * Note: The specified element which chosen via `selector`
  * will not be the target of mouse event when other element
  * is covering on it, the mouse event will be triggered
  * from the covering elements.
+ *
+ * There are two function signatures:
+ * - `(x: {Number}, y: {Number}) -> Mouse`:
+ *   Set mouse at point (x, y)
+ * - `(selector: {String/Object}, offset: {Object}) -> Mouse`:
+ *   Set mouse over on the specified element with an `offset`
+ *
+ * @return {Mouse} this
  */
 Mouse.prototype.goTo = function (selector, offset) {
-    let pos = {x: 0, y: 0};
+    return this._then(() => {
+        let pos = {x: 0, y: 0};
 
-    if (isNumber(arguments[0]) && isNumber(arguments[1])) {
-        pos.x = arguments[0];
-        pos.y = arguments[1];
-    } else {
-        const target = this.page.get(selector);
-        pos = getPagePositionOnNode(target, offset, true);
-    }
-
-    this._goTo(pos.x, pos.y);
-    return this;
-};
-
-Mouse.prototype.click = function () {
-    this._fire(this.currentTarget, 'click');
-    return this;
-};
-
-Mouse.prototype.dblclick = function () {
-    this._fire(this.currentTarget, 'dblclick');
-    return this;
-};
-
-Mouse.prototype.down = function () {
-    this._fire(this.currentTarget, 'mousedown');
-    return this;
-};
-
-Mouse.prototype.up = function () {
-    this._fire(this.currentTarget, 'mouseup');
-    return this;
-};
-
-Mouse.prototype.moveTo = function (selector, offset, delayPerStep) {
-    if (isNumber(arguments[0]) && isNumber(arguments[1])) {
-        this._moveTo(arguments[0], arguments[1]);
-        return this;
-    }
-
-    // TODO 根据鼠标位置下的节点依次触发mouseenter, mouseover, mouseout, mouseleave等事件
-    // NOTE: 指定的节点不一定是事件触发点，需检查最接近鼠标的节点。
-    // 如果二者为父子关系，则触发点的事件会向上冒泡给父节点；
-    // 否则，目标节点不会触发mouse事件
-    const target = this.page.get(selector);
-    const startPoint = {x: this.x, y: this.y};
-    const endPoint = getPagePositionOnNode(target, offset, true);
-
-    if (delayPerStep <= 0) {
-        this._moveTo(endPoint.x, endPoint.y);
-        return this;
-    }
-
-    const hDistance = Math.abs(endPoint.x - startPoint.x);
-    const xMovingStep = (endPoint.x - startPoint.x) / hDistance;
-    const yMovingStep = (endPoint.y - startPoint.y) / hDistance;
-    const movingTime = hDistance * delayPerStep;
-
-    const me = this;
-    (function moving(timelong) {
-        if (timelong >= movingTime) {
-            return;
-        } else if (timelong > 0) { // Ignore the first calling
-            // TODO Cut the precision?
-            const x = me.x + xMovingStep;
-            const y = me.y + yMovingStep;
-            me._moveTo(x, y);
+        if (isNumber(arguments[0]) && isNumber(arguments[1])) {
+            pos.x = arguments[0];
+            pos.y = arguments[1];
+        } else {
+            const node = this.page.get(selector);
+            pos = getPagePositionOnNode(node, offset, true);
         }
-        setTimeout(moving, delayPerStep, timelong + delayPerStep);
-    })(0);
 
+        const target = this._goTo(pos.x, pos.y);
+        return {pos, target};
+    });
+};
+
+/**
+ * Single click the mouse
+ *
+ * @return {Mouse} this
+ */
+Mouse.prototype.click = function () {
+    return this.fire('click');
+};
+
+/**
+ * Double click the mouse
+ *
+ * @return {Mouse} this
+ */
+Mouse.prototype.dblclick = function () {
+    return this.fire('dblclick');
+};
+
+/**
+ * Press down the mouse
+ *
+ * @return {Mouse} this
+ */
+Mouse.prototype.down = function () {
+    return this.fire('mousedown');
+};
+
+/**
+ * Release the mouse
+ *
+ * @return {Mouse} this
+ */
+Mouse.prototype.up = function () {
+    return this.fire('mouseup');
+};
+
+/**
+ * Note: The specified element which chosen via `selector`
+ * will not be the target of mouse event when other element
+ * is covering on it, the mouse event will be triggered
+ * from the covering elements.
+ *
+ * There are two function signatures:
+ * - `(x: {Number}, y: {Number}) -> Mouse`:
+ *   Move mouse to point (x, y)
+ * - `(selector: {String/Object}, offset: {Object}, delayPerStep: {Number}) -> Mouse`:
+ *   Move mouse to the specified element with an `offset`.
+ *   If `delayPerStep` is greater than zero, the mouse will be moved animatedly
+ *
+ * @return {Mouse} this
+ */
+Mouse.prototype.moveTo = function (selector, offset, delayPerStep) {
+    return this._then((payload) => {
+        const prevTarget = payload.target;
+        const startPoint = {...payload.pos};
+
+        let endPoint;
+        if (isNumber(arguments[0]) && isNumber(arguments[1])) {
+            endPoint = {x: arguments[0], y: arguments[1]};
+            delayPerStep = 0;
+        } else {
+            const target = this.page.get(selector);
+            endPoint = getPagePositionOnNode(target, offset, true);
+        }
+
+        if (startPoint.x === endPoint.x && startPoint.y === endPoint.y) {
+            return payload;
+        } else if (delayPerStep <= 0) {
+            const target = this._moveTo(endPoint.x, endPoint.y, prevTarget);
+            return {pos: endPoint, target};
+        } else {
+            const hDistance = Math.abs(endPoint.x - startPoint.x);
+            const xMovingStep = (endPoint.x - startPoint.x) / hDistance;
+            const yMovingStep = (endPoint.y - startPoint.y) / hDistance;
+            const movingTime = hDistance * delayPerStep;
+
+            let p = Promise.resolve(payload);
+            for (let timelong = 0; timelong < movingTime; timelong += delayPerStep) {
+                p = p.delay(delayPerStep).then((payload) => {
+                    const pos = payload.pos;
+                    const x = pos.x + xMovingStep;
+                    const y = pos.y + yMovingStep;
+
+                    const target = this._moveTo(x, y, payload.target);
+                    return {pos: {x, y}, target};
+                });
+            }
+            return p;
+        }
+    });
+};
+
+/**
+ * Fire mouse event
+ *
+ * @param {String} event The event name
+ * @param {Boolean} [canBubble=false] Whether bubble the event or not?
+ * @return {Mouse} this
+ */
+Mouse.prototype.fire = function (event, canBubble) {
+    return this._then((payload) => {
+        const target = payload.target;
+        const pos = {...payload.pos};
+
+        this._fire(target, event, pos, canBubble);
+
+        return payload;
+    });
+};
+
+/**
+ * Do something after all mouse actions are finished
+ *
+ * @return {Mouse} this
+ */
+Mouse.prototype.done = function (cb) {
+    cb && this._then(cb);
+    this.$p = Promise.resolve({pos: {x: 0, y: 0}, target: null});
     return this;
 };
 
-Mouse.prototype._goTo = function (x, y) {
-    this.x = x;
-    this.y = y;
-    this.currentTarget = this.page.getTopElementAt(this.x, this.y);
-
-    const space = 10;
-    this.page.scrollTo(this.x - space, this.y - space);
-
-    return this.currentTarget;
+/** @return {Mouse} this */
+Mouse.prototype._then = function (cb) {
+    this.$p = this.$p.then(cb);
+    return this;
 };
 
-Mouse.prototype._moveTo = function (x, y) {
-    if (this.x === x && this.y === y) {
-        // No event will be triggered when mouse is hold
-        return;
-    }
-
-    const prevTarget = this.currentTarget;
+/** @return {Element} The target element at (x, y) */
+Mouse.prototype._moveTo = function (x, y, prevTarget) {
     const currentTarget = this._goTo(x, y);
+    const endPoint = {x, y};
 
     if (prevTarget !== currentTarget) {
         // From one element to other element
-        this._fire(prevTarget, 'mouseleave', false);
-        this._fire(prevTarget, 'mouseout', true);
+        this._fire(prevTarget, 'mouseleave', endPoint, false);
+        this._fire(prevTarget, 'mouseout', endPoint, true);
 
-        this._fire(currentTarget, 'mouseenter', false);
-        this._fire(currentTarget, 'mouseover', true);
-        this._fire(currentTarget, 'mousemove', true);
+        this._fire(currentTarget, 'mouseenter', endPoint, false);
+        this._fire(currentTarget, 'mouseover', endPoint, true);
+        this._fire(currentTarget, 'mousemove', endPoint, true);
     } else {
-        this._fire(currentTarget, 'mousemove', true);
+        this._fire(currentTarget, 'mousemove', endPoint, true);
+    }
+    return currentTarget;
+};
+
+/** @return {Element} The target element at (x, y) */
+Mouse.prototype._goTo = function (x, y) {
+    const target = this.page.getTopElementAt(x, y);
+
+    const space = 10;
+    this.page.scrollTo(x - space, y - space);
+
+    return target;
+};
+
+/** @return {void} */
+Mouse.prototype._fire = function (target, event, pos, canBubble) {
+    if (event && target && pos) {
+        const state = defaults({
+            bubbles: canBubble !== false
+        }, this._state(target, pos));
+
+        // NOTE: Animation will be asynchronous, so calling it before firing events
+        this.page.drawMouse(event, state.pageX, state.pageY);
+        simulant.fire(target, event, state);
     }
 };
 
-Mouse.prototype._fire = function (target, event, canBubble) {
-    if (!target) {
-        return;
-    }
-
-    const state = defaults({
-        bubbles: canBubble !== false
-    }, this._state(target));
-
-    // NOTE: Animation will be asynchronous, so calling it before firing events
-    this.page.drawMouse(event, state.pageX, state.pageY);
-    simulant.fire(target, event, state);
-};
-
-Mouse.prototype._state = function (target) {
+/** @return {Object} The new state of mouse */
+Mouse.prototype._state = function (target, pos) {
     // https://developer.mozilla.org/en-US/docs/Web/API/MouseEvent/button
     // - 0: Main button pressed, usually the left button or the un-initialized state
     // - 1: Auxiliary button pressed, usually the wheel button or the middle button (if present)
@@ -252,11 +328,11 @@ Mouse.prototype._state = function (target) {
     // http://stackoverflow.com/questions/9262741/what-is-the-difference-between-pagex-y-clientx-y-screenx-y-in-javascript
     const targetOffset = getOffsetToPage(target);
     const targetBorder = getBorderSize(target);
-    const offsetX = this.x - targetOffset.x - targetBorder.left;
-    const offsetY = this.y - targetOffset.y - targetBorder.top;
+    const offsetX = pos.x - targetOffset.x - targetBorder.left;
+    const offsetY = pos.y - targetOffset.y - targetBorder.top;
 
-    const clientX = this.x - this.page.window.scrollX;
-    const clientY = this.y - this.page.window.scrollY;
+    const clientX = pos.x - this.page.window.scrollX;
+    const clientY = pos.y - this.page.window.scrollY;
     return {
         bubbles: true,
         button: 0,
@@ -267,8 +343,8 @@ Mouse.prototype._state = function (target) {
         clientY: clientY,
         offsetX: offsetX,
         offsetY: offsetY,
-        pageX: this.x,
-        pageY: this.y,
+        pageX: pos.x,
+        pageY: pos.y,
         screenX: clientX,
         screenY: clientY,
         x: clientX,
